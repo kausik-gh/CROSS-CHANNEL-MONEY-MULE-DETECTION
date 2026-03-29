@@ -1,7 +1,9 @@
 import pandas as pd
 import networkx as nx
 import matplotlib.pyplot as plt
-
+from pyvis.network import Network
+import tempfile
+import os
 
 # -----------------------------
 # Build Transaction Graph
@@ -24,7 +26,8 @@ def build_transaction_graph(accounts_df, transactions_df):
             tx["sender"],
             tx["receiver"],
             amount=tx["amount"],
-            timestamp=tx["timestamp"]
+            timestamp=tx["timestamp"],
+            is_attack=tx.get("is_attack", False)
         )
 
     return G
@@ -36,40 +39,126 @@ def build_transaction_graph(accounts_df, transactions_df):
 
 def visualize_fraud_subgraph(G):
 
-    fraud_nodes = [n for n in G.nodes if G.nodes[n]["is_fraud"] == 1]
-
-    if not fraud_nodes:
+    if G.number_of_nodes() == 0:
         return None
 
-    nodes_to_draw = set(fraud_nodes)
-
-    for fraud in fraud_nodes:
-        nodes_to_draw.update(G.predecessors(fraud))
-        nodes_to_draw.update(G.successors(fraud))
-
-    subG = G.subgraph(nodes_to_draw)
-
-    fig, ax = plt.subplots(figsize=(8,6))
-    pos = nx.spring_layout(subG, seed=42)
-
-    node_colors = []
-    for node in subG.nodes():
-        if subG.nodes[node]["is_fraud"] == 1:
-            node_colors.append("red")
-        else:
-            node_colors.append("skyblue")
-
-    nx.draw(
-        subG,
-        pos,
-        ax=ax,
-        with_labels=True,
-        node_size=800,
-        node_color=node_colors,
-        edge_color="gray",
-        font_size=8
+    net = Network(
+        height="600px",
+        width="100%",
+        bgcolor="#111111",
+        font_color="white",
+        directed=True
     )
-    return fig
+
+    net.barnes_hut()
+
+    # Professional spacing
+    net.repulsion(
+        node_distance=220,
+        central_gravity=0.2,
+        spring_length=200,
+        spring_strength=0.04
+    )
+
+    # Add nodes
+    for node, data in G.nodes(data=True):
+
+        is_fraud = data.get("is_fraud", 0)
+
+        if is_fraud == 1:
+            color = "red"
+            size = 30
+            title = f"""
+            <b>Account ID:</b> {node}<br>
+            <b>Status:</b> Fraud Account<br>
+            <b>Role:</b> Suspicious Node<br>
+            <b>Alert:</b> Part of coordinated mule network
+            """
+        else:
+            color = "skyblue"
+            size = 20
+            title = f"""
+            <b>Account ID:</b> {node}<br>
+            <b>Status:</b> Normal Account
+            """
+
+        net.add_node(
+            node,
+            label=str(node),
+            color=color,
+            size=size,
+            title=title,
+            borderWidth=2,
+            shape="dot",
+            shadow=True
+        )
+
+    # Add edges
+    for u, v, data in G.edges(data=True):
+
+        amount = data.get("amount", 0)
+        is_attack = data.get("is_attack", False)
+
+        if is_attack:
+
+            color = "red"
+            width = 4
+            title = f"""
+            <b>⚠ Suspicious Transaction</b><br>
+            Amount: {amount}
+            """
+
+        else:
+
+            color = "#888888"
+            width = 1.5
+            title = f"""
+            <b>Transaction</b><br>
+            Amount: {amount}
+            """
+
+        net.add_edge(
+            u,
+            v,
+            title=title,
+            color=color,
+            width=width,
+            arrows="to"
+        )
+
+
+
+    net.set_options("""
+    var options = {
+    "physics": {
+        "enabled": true,
+        "barnesHut": {
+        "gravitationalConstant": -8000,
+        "centralGravity": 0.3,
+        "springLength": 200,
+        "springConstant": 0.04
+        },
+        "minVelocity": 0.75
+    },
+    "edges": {
+        "arrows": {
+        "to": {
+            "enabled": true,
+            "scaleFactor": 0.6
+        }
+        },
+        "smooth": {
+        "type": "dynamic"
+        }
+    }
+    }
+    """)
+
+    # Save to temporary HTML
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".html")
+    net.save_graph(tmp_file.name)
+
+    return tmp_file.name
 
 
 # -----------------------------
@@ -94,8 +183,9 @@ def extract_node_features(accounts_df, transactions_df, G):
         total_out_amount = sum(edge[2]["amount"] for edge in outgoing_edges)
 
         # Retention ratio
+        
         if total_in_amount > 0:
-            retention_ratio = (total_in_amount - total_out_amount) / total_in_amount
+            retention_ratio = max(0,(total_in_amount - total_out_amount) / total_in_amount)
         else:
             retention_ratio = 0
 

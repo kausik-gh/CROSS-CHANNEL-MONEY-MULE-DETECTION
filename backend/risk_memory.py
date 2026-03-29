@@ -76,9 +76,11 @@ def compare_signature(new_signature):
         diff = 0
 
         for key in past:
-            diff += abs(past[key] - new_signature[key])
+            # ✅ Normalized difference
+            denom = abs(past[key]) + 1e-6
+            diff += abs(past[key] - new_signature[key]) / denom
 
-        similarity = 1 / (1 + diff)
+        similarity = np.exp(-diff)
         similarities.append(similarity)
 
     return max(similarities)
